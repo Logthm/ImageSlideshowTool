@@ -37,7 +37,7 @@ def natural_keys(text):
     return [int(c) if c.isdigit() else c.lower() for c in re.split(r'(\d+)', os.path.basename(text))]
 
 class ImageSlideshow:
-    def __init__(self, root, folder_paths, interval, font_path, fullscreen=False):
+    def __init__(self, root, folder_paths, interval, font_path, fullscreen=False, skip_first_image=False, regex_pattern=None, handle_unmatched="show_all"):
         self.root = root
         self.folder_paths = folder_paths
         self.interval_seconds = tk.IntVar(value=interval // 1000)
@@ -55,6 +55,10 @@ class ImageSlideshow:
 
         self.label = tk.Label(root, bg='black', font=self.default_font)
         self.label.pack(fill=tk.BOTH, expand=True)
+
+        self.regex_pattern = regex_pattern  # 存储用户输入的正则表达式
+        self.handle_unmatched = handle_unmatched  # 存储用户选择的处理方式
+        self.skip_first_image = skip_first_image  # 存储是否跳过第一张图片
 
         self.collect_images_from_folders()
         if not self.image_paths:
@@ -101,10 +105,39 @@ class ImageSlideshow:
             self.collect_images_dfs(os.path.join(current_path, folder))
 
         if not folders:
-            for file in sorted(files, key=lambda x: natural_keys(x)):
+            sorted_files = sorted(files, key=lambda x: natural_keys(x))
+            folder_name = os.path.basename(os.path.normpath(current_path))
+
+            # 默认：不限制图片数量
+            limit = None
+
+            # 如果提供了正则表达式，则尝试从文件夹名称中提取数量
+            if self.regex_pattern:
+                match = self.regex_pattern.search(folder_name)
+                if match:
+                    try:
+                        limit = int(match.group("num"))
+                    except (IndexError, ValueError) as e:
+                        messagebox.showwarning("警告", f"在文件夹 '{folder_name}' 中提取数字失败: {e}")
+                else:
+                    if self.handle_unmatched == "show_all":
+                        pass  # 不弹出提示
+                    elif self.handle_unmatched == "skip_folder":
+                        return  # 跳过该文件夹
+
+            # 如果需要跳过第一张图片
+            start_index = 1 if self.skip_first_image else 0
+
+            # 应用数量限制
+            if limit is not None:
+                end_index = start_index + limit
+                limited_files = sorted_files[start_index:end_index]
+            else:
+                limited_files = sorted_files[start_index:]
+
+            for file in limited_files:
                 if self.is_image_file(file):
                     full_path = os.path.normpath(os.path.join(current_path, file))
-                    folder_name = os.path.basename(os.path.normpath(current_path))
                     self.image_paths.append((full_path, folder_name))
 
     def is_image_file(self, filename):
@@ -323,8 +356,8 @@ class SlideshowApp:
     def __init__(self, root):
         self.root = root
         self.root.title("图片放映")
-        self.root.geometry("600x600")
-        self.root.minsize(600, 600)
+        self.root.geometry("900x600")
+        self.root.minsize(900, 600)
         self.root.resizable(True, True)
 
         icon_path = self.resource_path("icon.ico")
@@ -336,6 +369,9 @@ class SlideshowApp:
 
         self.folder_paths = []
         self.interval = tk.IntVar(value=8)
+        self.skip_first_image = tk.BooleanVar(value=False)  # 新增变量
+        self.regex_pattern = tk.StringVar(value="")  # 新增变量
+        self.handle_unmatched_regex = tk.StringVar(value="show_all")  # 新增变量
 
         self.create_widgets()
 
@@ -392,6 +428,58 @@ class SlideshowApp:
             font=default_font
         )
         interval_spinbox.pack(side=tk.LEFT, padx=5)
+
+        skip_frame = tk.Frame(self.root)
+        skip_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
+
+        skip_checkbox = tk.Checkbutton(
+            skip_frame,
+            text="跳过每个文件夹的第一张图片",
+            variable=self.skip_first_image,
+            font=default_font,
+            bg=self.root.cget('bg')  # 使背景与父容器一致
+        )
+        skip_checkbox.pack(anchor='w')
+
+        # 添加正则表达式输入框
+        regex_frame = tk.Frame(self.root)
+        regex_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
+
+        regex_label = tk.Label(regex_frame, text="使用正则表达式提取每个文件夹的图片数量 (使用 {num} 标记图片数):", font=default_font)
+        regex_label.pack(side=tk.LEFT)
+
+        regex_entry = tk.Entry(regex_frame, textvariable=self.regex_pattern, width=30, font=default_font)
+        regex_entry.pack(side=tk.LEFT, padx=5)
+
+        example_label = tk.Label(regex_frame, text="例如: 全{num}枚", font=default_font, fg="gray", bg=self.root.cget('bg'))
+        example_label.pack(side=tk.LEFT, padx=5)
+
+        # 添加正则表达式不匹配时的处理方式选择
+        handle_unmatched_frame = tk.Frame(self.root)
+        handle_unmatched_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
+
+        handle_unmatched_label = tk.Label(handle_unmatched_frame, text="正则表达式不匹配时的处理方式:", font=default_font)
+        handle_unmatched_label.pack(side=tk.LEFT)
+
+        show_all_rb = tk.Radiobutton(
+            handle_unmatched_frame,
+            text="放映全部图片",
+            variable=self.handle_unmatched_regex,
+            value="show_all",
+            font=default_font,
+            bg=self.root.cget('bg')  # 使背景与父容器一致
+        )
+        show_all_rb.pack(side=tk.LEFT, padx=5)
+
+        skip_folder_rb = tk.Radiobutton(
+            handle_unmatched_frame,
+            text="跳过该文件夹",
+            variable=self.handle_unmatched_regex,
+            value="skip_folder",
+            font=default_font,
+            bg=self.root.cget('bg')
+        )
+        skip_folder_rb.pack(side=tk.LEFT, padx=5)
 
         start_button = tk.Button(
             self.root,
@@ -455,6 +543,24 @@ class SlideshowApp:
             messagebox.showerror("错误", "请输入一个有效的正整数作为时间间隔。")
             return
 
+        regex = self.regex_pattern.get().strip()
+        if regex:
+            try:
+                # 检查正则表达式是否包含 {num} 命名组
+                if "{num}" not in regex:
+                    raise ValueError("正则表达式必须包含命名组 {num}")
+                # 替换 {num} 为正则命名组 (?P<num>\d+)
+                regex = regex.replace("{num}", "(?P<num>\\d+)")
+                compiled_regex = re.compile(regex)
+            except re.error as e:
+                messagebox.showerror("错误", f"无效的正则表达式: {e}")
+                return
+            except ValueError as ve:
+                messagebox.showerror("错误", str(ve))
+                return
+        else:
+            compiled_regex = None  # 无正则表达式时不限制图片数量
+
         sorted_folders = sorted(self.folder_paths, key=lambda x: natural_keys(x))
         slideshow_window = tk.Toplevel(self.root)
         set_fullscreen(slideshow_window)
@@ -464,7 +570,16 @@ class SlideshowApp:
         if not os.path.exists(font_path):
             font_path = None
 
-        slideshow = ImageSlideshow(slideshow_window, sorted_folders, interval_seconds * 1000, font_path, fullscreen=True)
+        slideshow = ImageSlideshow(
+            slideshow_window,
+            sorted_folders,
+            interval_seconds * 1000,
+            font_path,
+            fullscreen=True,
+            skip_first_image=self.skip_first_image.get(),
+            regex_pattern=compiled_regex,  # 传递编译后的正则表达式或 None
+            handle_unmatched=self.handle_unmatched_regex.get() if compiled_regex else "show_all"  # 仅在有正则时传递
+        )
 
 def main():
     try:

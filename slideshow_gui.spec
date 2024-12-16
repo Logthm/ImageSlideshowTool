@@ -5,7 +5,7 @@ a = Analysis(
     ['slideshow_gui.py'],
     pathex=[],
     binaries=[],
-    datas=[('C:\\Users\\14695\\PycharmProjects\\ImageSlideshowTool\\.venv\\Lib\\site-packages\\tkinterdnd2', 'tkinterdnd2/'), ('yahei.ttf', '.')],
+    datas=[('.venv\\Lib\\site-packages\\tkinterdnd2', 'tkinterdnd2/'), ('yahei.ttf', '.')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
