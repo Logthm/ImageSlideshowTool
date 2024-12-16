@@ -1,6 +1,7 @@
 import os
 import sys
 import re
+import json
 import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog
 from tkinter import font as tkfont
@@ -37,7 +38,7 @@ def natural_keys(text):
     return [int(c) if c.isdigit() else c.lower() for c in re.split(r'(\d+)', os.path.basename(text))]
 
 class ImageSlideshow:
-    def __init__(self, root, folder_paths, interval, font_path, fullscreen=False, skip_first_image=False, regex_pattern=None, handle_unmatched="show_all"):
+    def __init__(self, root, folder_paths, interval, font_path, settings, fullscreen=False, skip_first_image=False, regex_pattern=None, handle_unmatched="show_all"):
         self.root = root
         self.folder_paths = folder_paths
         self.interval_seconds = tk.IntVar(value=interval // 1000)
@@ -47,18 +48,19 @@ class ImageSlideshow:
         self.fullscreen = fullscreen
         self.is_running = True
         self.paused = False
-        self.is_looping = True
+        self.is_looping = settings["is_looping"]
         self.after_id = None
         self.operation_panel_visible = False
+        self.settings = settings  # Reference to main app's settings
 
         self.default_font = self.load_custom_font(font_path, size=11)
 
         self.label = tk.Label(root, bg='black', font=self.default_font)
         self.label.pack(fill=tk.BOTH, expand=True)
 
-        self.regex_pattern = regex_pattern  # 存储用户输入的正则表达式
-        self.handle_unmatched = handle_unmatched  # 存储用户选择的处理方式
-        self.skip_first_image = skip_first_image  # 存储是否跳过第一张图片
+        self.regex_pattern = regex_pattern
+        self.handle_unmatched = handle_unmatched
+        self.skip_first_image = skip_first_image
 
         self.collect_images_from_folders()
         if not self.image_paths:
@@ -68,10 +70,8 @@ class ImageSlideshow:
 
         self.root.update_idletasks()
 
-        # 先创建操作面板，确保 current_image_label 已存在
         self.add_operation_panel()
-
-        # 再显示第一张图片，以便 update_current_image_label() 可以正常工作
+        self.update_loop_button()
         self.show_image()
 
         self.root.bind("<Escape>", self.exit_slideshow)
@@ -105,13 +105,13 @@ class ImageSlideshow:
             self.collect_images_dfs(os.path.join(current_path, folder))
 
         if not folders:
-            sorted_files = sorted(files, key=lambda x: natural_keys(x))
+            image_files = [f for f in files if self.is_image_file(f)]
+            sorted_image_files = sorted(image_files, key=lambda x: natural_keys(x))
+
             folder_name = os.path.basename(os.path.normpath(current_path))
 
-            # 默认：不限制图片数量
             limit = None
 
-            # 如果提供了正则表达式，则尝试从文件夹名称中提取数量
             if self.regex_pattern:
                 match = self.regex_pattern.search(folder_name)
                 if match:
@@ -121,24 +121,19 @@ class ImageSlideshow:
                         messagebox.showwarning("警告", f"在文件夹 '{folder_name}' 中提取数字失败: {e}")
                 else:
                     if self.handle_unmatched == "show_all":
-                        pass  # 不弹出提示
+                        pass
                     elif self.handle_unmatched == "skip_folder":
-                        return  # 跳过该文件夹
+                        return
 
-            # 如果需要跳过第一张图片
-            start_index = 1 if self.skip_first_image else 0
+            if self.skip_first_image:
+                sorted_image_files = sorted_image_files[1:]
 
-            # 应用数量限制
             if limit is not None:
-                end_index = start_index + limit
-                limited_files = sorted_files[start_index:end_index]
-            else:
-                limited_files = sorted_files[start_index:]
+                sorted_image_files = sorted_image_files[:limit]
 
-            for file in limited_files:
-                if self.is_image_file(file):
-                    full_path = os.path.normpath(os.path.join(current_path, file))
-                    self.image_paths.append((full_path, folder_name))
+            for file in sorted_image_files:
+                full_path = os.path.normpath(os.path.join(current_path, file))
+                self.image_paths.append((full_path, folder_name))
 
     def is_image_file(self, filename):
         supported_extensions = ('.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tiff')
@@ -176,7 +171,6 @@ class ImageSlideshow:
         if not self.paused:
             self.schedule_show_image()
 
-        # 更新当前图片计数
         self.update_current_image_label()
 
     def schedule_show_image(self):
@@ -211,15 +205,12 @@ class ImageSlideshow:
         main_frame = tk.Frame(self.operation_panel, bg='black')
         main_frame.pack(expand=True, pady=10, padx=10)
 
-        # 当前放映张数 / 总张数标签
         self.current_image_label = tk.Label(main_frame, text="", font=self.default_font, bg='black', fg='white')
         self.current_image_label.pack(side=tk.LEFT, padx=5)
 
-        # 间隔数字标签
         self.interval_label = tk.Label(main_frame, text=f"延迟 = {self.interval_seconds.get()}", font=self.default_font, bg='black', fg='white', width=8, anchor='w')
         self.interval_label.pack(side=tk.LEFT, padx=5)
 
-        # 间隔滑条
         self.interval_scale = tk.Scale(
             main_frame,
             from_=1,
@@ -232,7 +223,7 @@ class ImageSlideshow:
             highlightbackground='black',
             troughcolor='gray',
             length=100,
-            showvalue = False
+            showvalue=False
         )
         self.interval_scale.set(self.interval_seconds.get())
         self.interval_scale.pack(side=tk.LEFT, padx=5)
@@ -272,6 +263,10 @@ class ImageSlideshow:
 
     def toggle_loop(self):
         self.is_looping = not self.is_looping
+        self.settings["is_looping"] = self.is_looping  # Update main app's settings
+        self.update_loop_button()
+
+    def update_loop_button(self):
         if self.is_looping:
             self.loop_button.config(text="循环播放")
         else:
@@ -306,6 +301,7 @@ class ImageSlideshow:
                 self.interval_seconds.set(new_interval)
                 self.interval = new_interval * 1000
                 self.interval_label.config(text=f"延迟 = {new_interval}")
+                self.settings["interval_seconds"] = new_interval  # Update main app's settings
                 if not self.paused:
                     self.schedule_show_image()
         except ValueError:
@@ -369,14 +365,31 @@ class SlideshowApp:
 
         self.folder_paths = []
         self.interval = tk.IntVar(value=8)
-        self.skip_first_image = tk.BooleanVar(value=False)  # 新增变量
-        self.regex_pattern = tk.StringVar(value="")  # 新增变量
-        self.handle_unmatched_regex = tk.StringVar(value="show_all")  # 新增变量
+        self.skip_first_image = tk.BooleanVar(value=False)
+        self.regex_pattern = tk.StringVar(value="")
+        self.handle_unmatched_regex = tk.StringVar(value="show_all")
+
+        script_dir = os.path.dirname(os.path.realpath(sys.argv[0]))
+        self.config_path = os.path.join(script_dir, "slideshow_config.json")
+        self.settings = {
+            "is_looping": True,
+            "interval_seconds": 8,
+            "regex_pattern": "",
+            "skip_first_image": False,
+            "handle_unmatched": "show_all"
+        }
+        self.load_settings()
 
         self.create_widgets()
 
         self.root.drop_target_register(DND_FILES)
         self.root.dnd_bind('<<Drop>>', self.handle_drop)
+
+        self.root.protocol("WM_DELETE_WINDOW", self.on_close)  # Bind close event to save settings
+
+        # Add traces to update settings in real-time
+        self.interval.trace_add("write", self.on_interval_change)
+        self.regex_pattern.trace_add("write", self.on_regex_change)
 
     def resource_path(self, relative_path):
         try:
@@ -437,11 +450,11 @@ class SlideshowApp:
             text="跳过每个文件夹的第一张图片",
             variable=self.skip_first_image,
             font=default_font,
-            bg=self.root.cget('bg')  # 使背景与父容器一致
+            bg=self.root.cget('bg'),
+            command=self.update_skip_first_image
         )
         skip_checkbox.pack(anchor='w')
 
-        # 添加正则表达式输入框
         regex_frame = tk.Frame(self.root)
         regex_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
 
@@ -454,7 +467,6 @@ class SlideshowApp:
         example_label = tk.Label(regex_frame, text="例如: 全{num}枚", font=default_font, fg="gray", bg=self.root.cget('bg'))
         example_label.pack(side=tk.LEFT, padx=5)
 
-        # 添加正则表达式不匹配时的处理方式选择
         handle_unmatched_frame = tk.Frame(self.root)
         handle_unmatched_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
 
@@ -467,7 +479,8 @@ class SlideshowApp:
             variable=self.handle_unmatched_regex,
             value="show_all",
             font=default_font,
-            bg=self.root.cget('bg')  # 使背景与父容器一致
+            bg=self.root.cget('bg'),
+            command=self.update_handle_unmatched
         )
         show_all_rb.pack(side=tk.LEFT, padx=5)
 
@@ -477,7 +490,8 @@ class SlideshowApp:
             variable=self.handle_unmatched_regex,
             value="skip_folder",
             font=default_font,
-            bg=self.root.cget('bg')
+            bg=self.root.cget('bg'),
+            command=self.update_handle_unmatched
         )
         skip_folder_rb.pack(side=tk.LEFT, padx=5)
 
@@ -544,12 +558,11 @@ class SlideshowApp:
             return
 
         regex = self.regex_pattern.get().strip()
+        compiled_regex = None
         if regex:
             try:
-                # 检查正则表达式是否包含 {num} 命名组
                 if "{num}" not in regex:
-                    raise ValueError("正则表达式必须包含命名组 {num}")
-                # 替换 {num} 为正则命名组 (?P<num>\d+)
+                    raise ValueError("正则表达式必须包含 {num} 标记")
                 regex = regex.replace("{num}", "(?P<num>\\d+)")
                 compiled_regex = re.compile(regex)
             except re.error as e:
@@ -558,8 +571,6 @@ class SlideshowApp:
             except ValueError as ve:
                 messagebox.showerror("错误", str(ve))
                 return
-        else:
-            compiled_regex = None  # 无正则表达式时不限制图片数量
 
         sorted_folders = sorted(self.folder_paths, key=lambda x: natural_keys(x))
         slideshow_window = tk.Toplevel(self.root)
@@ -575,11 +586,58 @@ class SlideshowApp:
             sorted_folders,
             interval_seconds * 1000,
             font_path,
+            self.settings,  # Pass reference to settings
             fullscreen=True,
             skip_first_image=self.skip_first_image.get(),
-            regex_pattern=compiled_regex,  # 传递编译后的正则表达式或 None
-            handle_unmatched=self.handle_unmatched_regex.get() if compiled_regex else "show_all"  # 仅在有正则时传递
+            regex_pattern=compiled_regex,
+            handle_unmatched=self.handle_unmatched_regex.get() if compiled_regex else "show_all"
         )
+
+    def load_settings(self):
+        if os.path.exists(self.config_path):
+            try:
+                with open(self.config_path, 'r', encoding='utf-8') as f:
+                    self.settings.update(json.load(f))
+                self.interval.set(self.settings["interval_seconds"])
+                self.skip_first_image.set(self.settings["skip_first_image"])
+                self.regex_pattern.set(self.settings["regex_pattern"])
+                self.handle_unmatched_regex.set(self.settings["handle_unmatched"])
+            except Exception as e:
+                messagebox.showwarning("警告", f"加载配置失败: {e}")
+
+    def save_settings(self):
+        # Update settings from current GUI state
+        self.settings["interval_seconds"] = self.interval.get()
+        self.settings["regex_pattern"] = self.regex_pattern.get()
+        self.settings["skip_first_image"] = self.skip_first_image.get()
+        self.settings["handle_unmatched"] = self.handle_unmatched_regex.get()
+
+        try:
+            with open(self.config_path, 'w', encoding='utf-8') as f:
+                json.dump(self.settings, f, ensure_ascii=False, indent=4)
+        except Exception as e:
+            messagebox.showwarning("警告", f"保存配置失败: {e}")
+
+    def on_close(self):
+        self.save_settings()
+        self.root.destroy()
+
+    def on_interval_change(self, *args):
+        try:
+            new_interval = self.interval.get()
+            if new_interval > 0:
+                self.settings["interval_seconds"] = new_interval
+        except:
+            pass
+
+    def on_regex_change(self, *args):
+        self.settings["regex_pattern"] = self.regex_pattern.get()
+
+    def update_skip_first_image(self):
+        self.settings["skip_first_image"] = self.skip_first_image.get()
+
+    def update_handle_unmatched(self):
+        self.settings["handle_unmatched"] = self.handle_unmatched_regex.get()
 
 def main():
     try:
